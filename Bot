@@ -1,0 +1,108 @@
+# Твій бот із запланованим опитуванням щоп’ятниці
+import datetime
+from telegram import Update
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, ConversationHandler, ContextTypes, filters
+)
+from apscheduler.schedulers.background import BackgroundScheduler
+
+# Стан розмови
+(ASK_CLIENTS, ASK_CALLS, ASK_MEETINGS, ASK_PRODUCTS) = range(4)
+
+# Збереження даних
+user_data_store = {}
+
+# Твій Chat ID і токен
+MANAGER_CHAT_ID = 8179235593
+TOKEN = "8179235593:AAEiMOdGQVHZp0W3Bz2CvNo-3IcSYEJ26do"
+
+# Діалог
+async def ask_clients(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_data_store["clients"] = update.message.text
+    await update.message.reply_text("2. Скільки холодних дзвінків плануєш зробити?")
+    return ASK_CALLS
+
+async def ask_calls(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_data_store["calls"] = update.message.text
+    await update.message.reply_text("3. Чи є заплановані зустрічі або об’єкти?")
+    return ASK_MEETINGS
+
+async def ask_meetings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_data_store["meetings"] = update.message.text
+    await update.message.reply_text("4. Які продукти у пріоритеті цього тижня?")
+    return ASK_PRODUCTS
+
+async def ask_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_data_store["products"] = update.message.text
+    plan = generate_week_plan(user_data_store)
+    await update.message.reply_text("Ось твій план на тиждень:")
+    await update.message.reply_text(plan)
+    return ConversationHandler.END
+
+# Генерація плану
+def generate_week_plan(data):
+    today = datetime.date.today()
+    monday = today + datetime.timedelta(days=-today.weekday())
+    date_range = f"{monday.strftime('%d.%m')}–{(monday + datetime.timedelta(days=4)).strftime('%d.%m')}"
+
+    return f"""
+План роботи ({date_range}):
+
+Понеділок:
+- CRM: оновлення, дзвінки ({data['calls']})
+- Робота з новими лідами ({data['clients']})
+
+Вівторок:
+- Зустрічі / об'єкти: {data['meetings']}
+- Пропозиції по {data['products']}
+
+Середа:
+- Розсилка / комунікація
+- КП по {data['products']}
+
+Четвер:
+- Робота з партнерами, дизайнерами
+
+П’ятниця:
+- Підсумки тижня
+- Планування наступного
+"""
+
+# Команда /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Привіт! Планувальник активний. Щоп’ятниці я буду писати тобі сам.")
+
+# Автоматичне опитування
+async def friday_checkin(application: Application):
+    await application.bot.send_message(chat_id=MANAGER_CHAT_ID, text="Привіт! Пора скласти план на наступний тиждень.")
+    await application.bot.send_message(chat_id=MANAGER_CHAT_ID, text="1. Скільки нових клієнтів хочеш залучити?")
+    return ASK_CLIENTS
+
+# Запуск
+def main():
+    app = Application.builder().token(TOKEN).build()
+
+    conv_handler = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^\d+$"), ask_clients)],
+        states={
+            ASK_CLIENTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_clients)],
+            ASK_CALLS: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_calls)],
+            ASK_MEETINGS: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_meetings)],
+            ASK_PRODUCTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_products)],
+        },
+        fallbacks=[],
+    )
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(conv_handler)
+
+    # Планувальник: п’ятниця 09:00
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(lambda: app.create_task(friday_checkin(app)), 'cron', day_of_week='fri', hour=9, minute=0)
+    scheduler.start()
+
+    print("Бот працює, чекає п’ятниці...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
